@@ -16,17 +16,25 @@ def create_spark_session():
     """
     logger.info(f"Creating SparkSession with master={SPARK_MASTER} and appName={SPARK_APP_NAME}")
     
+    # Determine the correct endpoint for MinIO/S3
+    # When running in Docker, use the service name instead of localhost
+    endpoint = SPARK_ENDPOINT_INTERNAL
+    logger.info(f"Using S3 endpoint: {endpoint}")
+    
     # Create SparkSession with standard configuration
     spark = (SparkSession.builder
              .master(SPARK_MASTER)
              .appName(SPARK_APP_NAME)
              .config("spark.driver.extraClassPath", "/usr/share/java/*")
              .config("spark.executor.extraClassPath", "/usr/share/java/*")
-             .config("spark.hadoop.fs.s3a.endpoint", f"http://{MINIO_ENDPOINT}")
+             .config("spark.hadoop.fs.s3a.endpoint", endpoint)
              .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
              .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
              .config("spark.hadoop.fs.s3a.path.style.access", "true")
              .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
+             .config("spark.hadoop.fs.s3a.connection.establish.timeout", "5s")
+             .config("spark.hadoop.fs.s3a.connection.timeout", "10s")
+             .config("spark.hadoop.fs.s3a.attempts.maximum", "20")
              .getOrCreate())
     
     return spark
@@ -50,11 +58,14 @@ def read_csv_to_dataframe(spark, file_path, schema=None, header=True):
     # Set up options for CSV reading
     options = {
         "header": str(header).lower(),
-        "dateFormat": "M/d/yyyy",  # Format for dates like 1/2/2011
-        "timestampFormat": "M/d/yyyy",  # Format for timestamps
+        "dateFormat": "M/d/yyyy,yyyy-MM-dd,MM/dd/yyyy,d/M/yyyy",  # Support multiple date formats
+        "timestampFormat": "M/d/yyyy HH:mm:ss,yyyy-MM-dd HH:mm:ss,MM/dd/yyyy HH:mm:ss",  # Support multiple timestamp formats
         "mode": "PERMISSIVE",  # Be permissive with bad records
         "nullValue": "",  # Treat empty strings as null
-        "emptyValue": None  # Treat empty fields as null
+        "emptyValue": None,  # Treat empty fields as null
+        "maxCharsPerColumn": "4096",  # Handle larger field values
+        "multiLine": "true",  # Handle multi-line fields
+        "maxColumns": "300"  # Allow many columns
     }
     
     # Create reader with options

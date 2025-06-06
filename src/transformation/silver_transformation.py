@@ -4,10 +4,11 @@ Silver layer transformation module
 from loguru import logger
 from pyspark.sql import DataFrame
 from pyspark.sql.functions import col, expr, current_timestamp, lit
+from datetime import datetime
 
 from src.config.config import BRONZE_BUCKET, SILVER_BUCKET, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB
 from src.utils.spark_utils import create_spark_session, apply_transformations, write_dataframe_to_parquet
-from src.utils.storage_utils import create_table_if_not_exists, load_data_from_minio_to_postgres, get_postgres_connection, execute_sql
+from src.utils.storage_utils import create_table_if_not_exists, load_data_from_minio_to_postgres, get_postgres_connection, execute_sql, execute_sql_with_retry
 from src.audit.audit import ETLAuditor
 from src.notification.notification import ETLNotifier
 from src.ingestion.bronze_ingestion import get_last_processed_timestamp, update_watermark
@@ -130,8 +131,11 @@ def transform_to_silver(pipeline_config, source_config, audit=True, notify=True,
             if count > 0 and incremental_column:
                 max_value = df.agg({incremental_column: "max"}).collect()[0][0]
                 if max_value:
-                    update_watermark(silver_table, incremental_column, str(max_value))
-                    logger.info(f"Updated watermark for {silver_table}.{incremental_column} to {max_value}")
+                    # Convert max_value to string if it's a date/timestamp
+                    max_value_str = str(max_value)
+                    
+                    update_watermark(silver_table, incremental_column, max_value_str)
+                    logger.info(f"Updated watermark for {silver_table}.{incremental_column} to {max_value_str}")
         
         # Handle the write to silver layer differently based on incremental vs full load
         silver_path = f"s3a://{SILVER_BUCKET}/{silver_table}"
@@ -241,22 +245,34 @@ def transform_to_silver(pipeline_config, source_config, audit=True, notify=True,
                 cols = [col for col in schema_dict.keys() if col != primary_key]
                 update_cols = ", ".join([f"\"{col}\" = EXCLUDED.\"{col}\"" for col in cols])
                 
-                # Perform UPSERT operation with proper transaction handling
+                # Perform UPSERT operation with proper transaction handling and retry logic
                 upsert_sql = f"""
                 BEGIN;
                 -- Insert new records or update existing ones
                 INSERT INTO silver.{silver_table} 
                 SELECT * FROM silver.{temp_table}
-                ON CONFLICT ({primary_key})
+                ON CONFLICT ("{primary_key}")
                 DO UPDATE SET {update_cols};
                 
-                -- Clean up temp table
-                DROP TABLE IF EXISTS silver.{temp_table};
+                -- Clean up temporary table
+                DROP TABLE silver.{temp_table};
                 COMMIT;
                 """
-                execute_sql(upsert_sql)
                 
-                logger.info(f"Successfully performed UPSERT into silver.{silver_table}")
+                try:
+                    # Use retry logic for the upsert operation
+                    execute_sql_with_retry(upsert_sql, max_retries=5)
+                    logger.info(f"Successfully performed UPSERT operation on silver.{silver_table}")
+                except Exception as e:
+                    logger.error(f"Error performing UPSERT operation: {e}")
+                    
+                    # In case of error, try to clean up the temp table to avoid leaving artifacts
+                    try:
+                        execute_sql(f"DROP TABLE IF EXISTS silver.{temp_table};")
+                    except:
+                        pass
+                    
+                    raise
             else:
                 # For full load, delete existing and insert new
                 execute_sql(f"DELETE FROM silver.{silver_table}")
@@ -306,14 +322,21 @@ def transform_to_silver(pipeline_config, source_config, audit=True, notify=True,
             auditor.complete_with_error(error_msg)
             
             if notify:
+                # Ensure end_time is set to avoid NoneType errors
+                if not auditor.end_time:
+                    auditor.end_time = datetime.now()
                 duration = (auditor.end_time - auditor.start_time).total_seconds()
-                ETLNotifier.notify_pipeline_failure(
-                    pipeline_id=pipeline_config.get("source"),
-                    source_name=f"bronze.{bronze_table}",
-                    destination_name=f"silver.{silver_table}",
-                    error_message=error_msg,
-                    duration_seconds=duration
-                )
+                
+                try:
+                    ETLNotifier.notify_pipeline_failure(
+                        pipeline_id=pipeline_config.get("source"),
+                        source_name=f"bronze.{bronze_table}",
+                        destination_name=f"silver.{silver_table}",
+                        error_message=error_msg,
+                        duration_seconds=duration
+                    )
+                except Exception as notify_error:
+                    logger.error(f"Failed to send notification: {notify_error}")
         
         raise
 

@@ -6,7 +6,7 @@ from datetime import datetime
 import json
 from loguru import logger
 
-from src.utils.storage_utils import execute_sql
+from src.utils.storage_utils import execute_sql, execute_sql_with_retry
 
 
 class ETLAuditor:
@@ -61,7 +61,7 @@ class ETLAuditor:
         
         try:
             logger.debug(f"Creating audit record for pipeline: {self.pipeline_id} (load type: {self.load_type})")
-            result = execute_sql(sql, params, fetch=True)
+            result = execute_sql_with_retry(sql, params, fetch=True)
             
             if result and len(result) > 0 and len(result[0]) > 0:
                 self.audit_id = result[0][0]
@@ -69,7 +69,7 @@ class ETLAuditor:
                 
                 # Verify record exists
                 verify_sql = "SELECT COUNT(*) FROM public.etl_audit WHERE audit_id = %s;"
-                verify_result = execute_sql(verify_sql, (self.audit_id,), fetch=True)
+                verify_result = execute_sql_with_retry(verify_sql, (self.audit_id,), fetch=True)
                 record_count = verify_result[0][0] if verify_result and len(verify_result) > 0 else 0
                 
                 if record_count == 0:
@@ -147,12 +147,12 @@ class ETLAuditor:
         
         try:
             logger.debug(f"Updating audit record with ID: {self.audit_id}, status: {self.status}")
-            execute_sql(sql, params)
+            execute_sql_with_retry(sql, params)
             logger.info(f"Updated audit record {self.audit_id} with status: {self.status}")
             
             # Verify the update
             verify_sql = "SELECT status FROM public.etl_audit WHERE audit_id = %s;"
-            verify_result = execute_sql(verify_sql, (self.audit_id,), fetch=True)
+            verify_result = execute_sql_with_retry(verify_sql, (self.audit_id,), fetch=True)
             
             if not verify_result or len(verify_result) == 0:
                 logger.error(f"Audit record with ID {self.audit_id} not found after update!")
@@ -197,6 +197,10 @@ class ETLAuditor:
         self.records_processed = records_processed
         self.update_status("FAILED", error_message)
         
+        # Ensure end_time is set
+        if not self.end_time:
+            self.end_time = datetime.now()
+            
         duration = (self.end_time - self.start_time).total_seconds()
         logger.error(f"Pipeline {self.pipeline_id} failed after {duration:.2f} seconds. " \
                    f"Error: {error_message}")
@@ -230,7 +234,7 @@ def get_pipeline_execution_history(pipeline_id=None, limit=10):
         params = (limit,)
     
     try:
-        results = execute_sql(sql, params, fetch=True)
+        results = execute_sql_with_retry(sql, params, fetch=True)
         return results
     except Exception as e:
         logger.error(f"Failed to get pipeline execution history: {e}")

@@ -2,6 +2,7 @@
 Utility functions for storage (MinIO and PostgreSQL)
 """
 import os
+import time
 from minio import Minio
 from minio.error import S3Error
 import psycopg2
@@ -39,15 +40,28 @@ def upload_file_to_minio(local_file_path, bucket_name, object_name=None):
     if object_name is None:
         object_name = os.path.basename(local_file_path)
     
-    client = get_minio_client()
+    # Add retry logic
+    max_retries = 5
+    retry_count = 0
     
-    try:
-        logger.info(f"Uploading {local_file_path} to {bucket_name}/{object_name}")
-        client.fput_object(bucket_name, object_name, local_file_path)
-        logger.info(f"Successfully uploaded {object_name} to {bucket_name}")
-    except S3Error as e:
-        logger.error(f"Error uploading {local_file_path}: {e}")
-        raise
+    while retry_count < max_retries:
+        try:
+            client = get_minio_client()
+            
+            logger.info(f"Uploading {local_file_path} to {bucket_name}/{object_name}")
+            client.fput_object(bucket_name, object_name, local_file_path)
+            logger.info(f"Successfully uploaded {object_name} to {bucket_name}")
+            return
+        except S3Error as e:
+            retry_count += 1
+            if retry_count < max_retries:
+                wait_time = 2 ** retry_count  # Exponential backoff
+                logger.warning(f"MinIO connection error (attempt {retry_count}/{max_retries}): {e}")
+                logger.info(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Error uploading {local_file_path}: {e}")
+                raise
 
 
 def get_postgres_connection():
@@ -55,13 +69,31 @@ def get_postgres_connection():
     Get a connection to PostgreSQL
     """
     logger.info(f"Connecting to PostgreSQL at {POSTGRES_HOST}:{POSTGRES_PORT}")
-    return psycopg2.connect(
-        host=POSTGRES_HOST,
-        port=POSTGRES_PORT,
-        user=POSTGRES_USER,
-        password=POSTGRES_PASSWORD,
-        dbname=POSTGRES_DB
-    )
+    max_retries = 5
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            connection = psycopg2.connect(
+                host=POSTGRES_HOST,
+                port=POSTGRES_PORT,
+                user=POSTGRES_USER,
+                password=POSTGRES_PASSWORD,
+                dbname=POSTGRES_DB,
+                connect_timeout=10  # Add connection timeout
+            )
+            connection.autocommit = False  # Ensure explicit transaction control
+            return connection
+        except psycopg2.OperationalError as e:
+            retry_count += 1
+            if retry_count < max_retries:
+                wait_time = 2 ** retry_count  # Exponential backoff
+                logger.warning(f"PostgreSQL connection error (attempt {retry_count}/{max_retries}): {e}")
+                logger.info(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Failed to connect to PostgreSQL after {max_retries} attempts: {e}")
+                raise
 
 
 def execute_sql(sql, params=None, fetch=False):
@@ -111,6 +143,47 @@ def execute_sql(sql, params=None, fetch=False):
             logger.debug("Database connection closed")
 
 
+def execute_sql_with_retry(sql, params=None, fetch=False, max_retries=3, retry_delay=2):
+    """
+    Execute a SQL statement with retry logic for handling transient errors
+    
+    Args:
+        sql: SQL statement to execute
+        params: Parameters for the SQL statement
+        fetch: Whether to fetch results
+        max_retries: Maximum number of retry attempts
+        retry_delay: Base delay between retries (will use exponential backoff)
+        
+    Returns:
+        Query results if fetch is True
+    """
+    retry_count = 0
+    last_error = None
+    
+    while retry_count < max_retries:
+        try:
+            return execute_sql(sql, params, fetch)
+        except psycopg2.OperationalError as e:
+            # Operational errors like connection failures are retryable
+            last_error = e
+            retry_count += 1
+            backoff = retry_delay * (2 ** (retry_count - 1))  # Exponential backoff
+            logger.warning(f"Database connection error (attempt {retry_count}/{max_retries}): {e}")
+            logger.info(f"Retrying in {backoff} seconds...")
+            time.sleep(backoff)
+        except Exception as e:
+            # Don't retry other types of errors
+            logger.error(f"Non-retryable database error: {e}")
+            raise
+    
+    # If we get here, all retries failed
+    logger.error(f"All {max_retries} database connection attempts failed: {last_error}")
+    if last_error:
+        raise last_error
+    else:
+        raise Exception(f"All {max_retries} database connection attempts failed with unknown error")
+
+
 def create_table_if_not_exists(table_name, schema_dict, schema_name="public", primary_key=None):
     """
     Create a table in PostgreSQL if it doesn't exist
@@ -150,7 +223,7 @@ def create_table_if_not_exists(table_name, schema_dict, schema_name="public", pr
     """
     
     logger.info(f"Creating table {schema_name}.{table_name} if it doesn't exist")
-    execute_sql(create_table_sql)
+    execute_sql_with_retry(create_table_sql)
 
 
 def load_data_from_minio_to_postgres(bucket_name, table_name, schema_name="public"):
@@ -163,10 +236,13 @@ def load_data_from_minio_to_postgres(bucket_name, table_name, schema_name="publi
         schema_name: Schema name in PostgreSQL
     """
     client = get_minio_client()
-    conn = get_postgres_connection()
-    cursor = conn.cursor()
+    conn = None
+    cursor = None
     
     try:
+        conn = get_postgres_connection()
+        cursor = conn.cursor()
+        
         # List all objects in the bucket
         objects = client.list_objects(bucket_name)
         
@@ -192,12 +268,15 @@ def load_data_from_minio_to_postgres(bucket_name, table_name, schema_name="publi
         logger.info(f"Successfully loaded data from {bucket_name} to {schema_name}.{table_name}")
         
     except Exception as e:
-        conn.rollback()
+        if conn:
+            conn.rollback()
         logger.error(f"Error loading data from MinIO to PostgreSQL: {e}")
         raise
     finally:
-        cursor.close()
-        conn.close()
+        if cursor:
+            cursor.close()
+        if conn:
+            conn.close()
 
 
 def init_database():
@@ -212,7 +291,7 @@ def init_database():
     CREATE SCHEMA IF NOT EXISTS silver;
     CREATE SCHEMA IF NOT EXISTS gold;
     """
-    execute_sql(create_schema_sql)
+    execute_sql_with_retry(create_schema_sql)
     
     # Create audit table
     create_audit_table_sql = """
@@ -245,9 +324,9 @@ def init_database():
     
     # Execute SQL
     try:
-        execute_sql(create_schema_sql)
-        execute_sql(create_audit_table_sql)
-        execute_sql(create_watermarks_table_sql)
+        execute_sql_with_retry(create_schema_sql)
+        execute_sql_with_retry(create_audit_table_sql)
+        execute_sql_with_retry(create_watermarks_table_sql)
         logger.info("Database initialization completed successfully")
     except Exception as e:
         logger.error(f"Error initializing database: {e}")
@@ -260,14 +339,32 @@ def init_minio():
     """
     logger.info("Initializing MinIO...")
     
-    client = get_minio_client()
+    # Add retry logic for MinIO connection
+    max_retries = 5
+    retry_count = 0
     
-    # Create buckets if they don't exist
-    for bucket in [BRONZE_BUCKET, SILVER_BUCKET, GOLD_BUCKET]:
-        if not client.bucket_exists(bucket):
-            client.make_bucket(bucket)
-            logger.info(f"Created bucket: {bucket}")
-        else:
-            logger.info(f"Bucket already exists: {bucket}")
-    
-    logger.info("MinIO initialization completed successfully") 
+    while retry_count < max_retries:
+        try:
+            client = get_minio_client()
+            
+            # Create buckets if they don't exist
+            for bucket in [BRONZE_BUCKET, SILVER_BUCKET, GOLD_BUCKET]:
+                if not client.bucket_exists(bucket):
+                    client.make_bucket(bucket)
+                    logger.info(f"Created bucket: {bucket}")
+                else:
+                    logger.info(f"Bucket already exists: {bucket}")
+            
+            logger.info("MinIO initialization completed successfully")
+            return
+            
+        except S3Error as e:
+            retry_count += 1
+            if retry_count < max_retries:
+                wait_time = 2 ** retry_count  # Exponential backoff
+                logger.warning(f"MinIO connection error (attempt {retry_count}/{max_retries}): {e}")
+                logger.info(f"Retrying in {wait_time} seconds...")
+                time.sleep(wait_time)
+            else:
+                logger.error(f"Failed to initialize MinIO after {max_retries} attempts: {e}")
+                raise 

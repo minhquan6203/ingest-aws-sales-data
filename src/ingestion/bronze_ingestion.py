@@ -9,7 +9,7 @@ from pyspark.sql.functions import col, lit
 
 from src.config.config import BRONZE_BUCKET
 from src.utils.spark_utils import create_spark_session, read_csv_to_dataframe, write_dataframe_to_parquet
-from src.utils.storage_utils import upload_file_to_minio, execute_sql
+from src.utils.storage_utils import upload_file_to_minio, execute_sql, execute_sql_with_retry
 from src.audit.audit import ETLAuditor
 from src.notification.notification import ETLNotifier
 
@@ -30,7 +30,7 @@ def get_last_processed_timestamp(table_name, incremental_column):
     WHERE table_name = %s AND column_name = %s;
     """
     try:
-        result = execute_sql(sql, (table_name, incremental_column), fetch=True)
+        result = execute_sql_with_retry(sql, (table_name, incremental_column), fetch=True)
         if result and len(result) > 0 and result[0][0]:
             last_timestamp = result[0][0]
             logger.info(f"Found last processed timestamp for {table_name}.{incremental_column}: {last_timestamp}")
@@ -60,7 +60,7 @@ def update_watermark(table_name, incremental_column, max_value):
     SELECT 1 FROM public.etl_watermarks 
     WHERE table_name = %s AND column_name = %s;
     """
-    result = execute_sql(check_sql, (table_name, incremental_column), fetch=True)
+    result = execute_sql_with_retry(check_sql, (table_name, incremental_column), fetch=True)
     
     if result and len(result) > 0:
         # Update existing record
@@ -69,14 +69,14 @@ def update_watermark(table_name, incremental_column, max_value):
         SET max_value = %s, last_updated = NOW() 
         WHERE table_name = %s AND column_name = %s;
         """
-        execute_sql(update_sql, (max_value, table_name, incremental_column))
+        execute_sql_with_retry(update_sql, (max_value, table_name, incremental_column))
     else:
         # Insert new record
         insert_sql = """
         INSERT INTO public.etl_watermarks (table_name, column_name, max_value, last_updated)
         VALUES (%s, %s, %s, NOW());
         """
-        execute_sql(insert_sql, (table_name, incremental_column, max_value))
+        execute_sql_with_retry(insert_sql, (table_name, incremental_column, max_value))
     
     logger.info(f"Updated watermark for {table_name}.{incremental_column} to {max_value}")
 
@@ -197,8 +197,13 @@ def ingest_to_bronze(source_config, audit=True, notify=True, incremental=True):
                 if max_value:
                     # Get previous watermark for logging
                     previous_watermark = get_last_processed_timestamp(bronze_table, incremental_column)
-                    update_watermark(bronze_table, incremental_column, max_value)
-                    logger.info(f"Incremental load watermark updated: {bronze_table}.{incremental_column} from {previous_watermark} to {max_value}")
+                    
+                    # Convert max_value to string if it's a date/timestamp
+                    max_value_str = str(max_value)
+                    
+                    # Update the watermark
+                    update_watermark(bronze_table, incremental_column, max_value_str)
+                    logger.info(f"Incremental load watermark updated: {bronze_table}.{incremental_column} from {previous_watermark} to {max_value_str}")
         
         # Update audit status
         if auditor:
@@ -224,14 +229,21 @@ def ingest_to_bronze(source_config, audit=True, notify=True, incremental=True):
             auditor.complete_with_error(error_msg)
             
             if notify:
+                # Ensure end_time is set to avoid NoneType errors
+                if not auditor.end_time:
+                    auditor.end_time = datetime.now()
                 duration = (auditor.end_time - auditor.start_time).total_seconds()
-                ETLNotifier.notify_pipeline_failure(
-                    pipeline_id=f"bronze_{bronze_table}",
-                    source_name=source_path,
-                    destination_name=f"bronze.{bronze_table}",
-                    error_message=error_msg,
-                    duration_seconds=duration
-                )
+                
+                try:
+                    ETLNotifier.notify_pipeline_failure(
+                        pipeline_id=f"bronze_{bronze_table}",
+                        source_name=source_path,
+                        destination_name=f"bronze.{bronze_table}",
+                        error_message=error_msg,
+                        duration_seconds=duration
+                    )
+                except Exception as notify_error:
+                    logger.error(f"Failed to send notification: {notify_error}")
         
         raise
 
@@ -258,9 +270,23 @@ def create_spark_schema(schema_dict):
         "timestamp": TimestampType()
     }
     
+    # Add case-insensitive mapping for common variations
+    type_mapping.update({
+        "str": StringType(),
+        "text": StringType(),
+        "varchar": StringType(),
+        "int64": IntegerType(),
+        "bigint": IntegerType(),
+        "decimal": DoubleType(),
+        "numeric": DoubleType(),
+        "bool": BooleanType(),
+        "datetime": TimestampType()
+    })
+    
     fields = []
     for column_name, data_type in schema_dict.items():
-        spark_type = type_mapping.get(data_type.lower(), StringType())
+        data_type_lower = data_type.lower() if isinstance(data_type, str) else "string"
+        spark_type = type_mapping.get(data_type_lower, StringType())
         fields.append(StructField(column_name, spark_type, True))
     
     return StructType(fields) 

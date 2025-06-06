@@ -3,10 +3,11 @@ Gold layer transformation module
 """
 from loguru import logger
 from pyspark.sql.functions import col
+from datetime import datetime
 
 from src.config.config import SILVER_BUCKET, GOLD_BUCKET, POSTGRES_USER, POSTGRES_PASSWORD, POSTGRES_HOST, POSTGRES_PORT, POSTGRES_DB
 from src.utils.spark_utils import create_spark_session, write_dataframe_to_parquet
-from src.utils.storage_utils import create_table_if_not_exists, execute_sql
+from src.utils.storage_utils import create_table_if_not_exists, execute_sql, execute_sql_with_retry
 from src.audit.audit import ETLAuditor
 from src.notification.notification import ETLNotifier
 
@@ -99,20 +100,28 @@ def transform_to_gold(pipeline_config, incremental=False, audit=True, notify=Tru
                         max_date = max_date_result[0][0] if max_date_result and max_date_result[0][0] else None
                     
                     if max_date:
-                        # Add the incremental filter to the SQL by adding to JOIN condition
-                        # This avoids the issue of trying to put WHERE after GROUP BY
-                        if "JOIN silver_customers c ON" in sql_transform:
-                            # Add to the JOIN condition before GROUP BY
+                        # Try to add the incremental filter to the WHERE clause if possible
+                        # This is a more general approach that works with different SQL structures
+                        if "WHERE" in sql_transform:
+                            # Add to existing WHERE clause
                             modified_sql = sql_transform.replace(
-                                "JOIN silver_customers c ON o.customer_id = c.customer_id",
-                                f"JOIN silver_customers c ON o.customer_id = c.customer_id AND o.order_date > '{max_date}'"
+                                "WHERE",
+                                f"WHERE \"{incremental_condition.split(' ')[0]}\" > '{max_date}' AND "
                             )
                             sql_with_filter = modified_sql
-                            logger.info(f"Added incremental filter condition with max_date: {max_date}")
+                            logger.info(f"Added incremental filter condition with max_date: {max_date} to WHERE clause")
+                        elif "GROUP BY" in sql_transform:
+                            # Add WHERE before GROUP BY
+                            modified_sql = sql_transform.replace(
+                                "GROUP BY",
+                                f"WHERE \"{incremental_condition.split(' ')[0]}\" > '{max_date}' GROUP BY"
+                            )
+                            sql_with_filter = modified_sql
+                            logger.info(f"Added incremental filter condition with max_date: {max_date} before GROUP BY")
                         else:
-                            # Fallback to full load if we can't safely modify
-                            logger.warning(f"Cannot safely add incremental filter, using full load")
-                            sql_with_filter = sql_transform
+                            # Add WHERE at the end
+                            sql_with_filter = f"{sql_transform} WHERE \"{incremental_condition.split(' ')[0]}\" > '{max_date}'"
+                            logger.info(f"Added incremental filter condition with max_date: {max_date} at the end")
                     else:
                         logger.info(f"No valid max date found in {destination}, performing full load")
                         sql_with_filter = sql_transform
@@ -204,26 +213,37 @@ def transform_to_gold(pipeline_config, incremental=False, audit=True, notify=Tru
                     schema_name="gold"
                 )
                 
-                # Execute merge SQL using incremental condition
+                # Execute merge SQL using incremental condition with proper quoting of column names
                 merge_sql = f"""
                     BEGIN;
                     -- Insert new records or update existing ones
                     INSERT INTO gold.{destination}
                     SELECT * FROM gold.{temp_table}
-                    ON CONFLICT ({primary_key})
+                    ON CONFLICT ("{primary_key}")
                     DO UPDATE SET 
                         {', '.join([f'"{col}" = EXCLUDED."{col}"' for col in result_df.columns if col != primary_key])};
                     
                     -- Clean up temp table
-                    DROP TABLE IF EXISTS gold.{temp_table};
+                    DROP TABLE gold.{temp_table};
                     COMMIT;
                 """
-                execute_sql(merge_sql)
-                logger.info(f"Successfully merged data into gold.{destination} (incremental load)")
+                try:
+                    execute_sql_with_retry(merge_sql, max_retries=5)
+                    logger.info(f"Successfully merged data into gold.{destination} (incremental load)")
+                except Exception as e:
+                    logger.error(f"Error performing merge operation: {e}")
+                    
+                    # Try to clean up the temp table in case of failure
+                    try:
+                        execute_sql(f"DROP TABLE IF EXISTS gold.{temp_table};")
+                    except:
+                        pass
+                    
+                    raise
             else:
-                # Full load - delete and insert
+                # Full load - delete and insert with retry logic
                 logger.info(f"Full load: Replacing all data in gold.{destination}")
-                execute_sql(f"DELETE FROM gold.{destination}")
+                execute_sql_with_retry(f"DELETE FROM gold.{destination}")
                 
                 # Write DataFrame to PostgreSQL
                 result_df.write \
@@ -268,13 +288,20 @@ def transform_to_gold(pipeline_config, incremental=False, audit=True, notify=Tru
             
             if notify:
                 source_name = ", ".join(f"silver.{s}" for s in sources)
-                duration = (auditor.end_time - auditor.start_time).total_seconds() if auditor.end_time else 0
-                ETLNotifier.notify_pipeline_failure(
-                    pipeline_id=pipeline_config.get("id", destination),
-                    source_name=source_name,
-                    destination_name=f"gold.{destination}",
-                    error_message=error_msg,
-                    duration_seconds=duration
-                )
+                # Ensure end_time is set to avoid NoneType errors
+                if not auditor.end_time:
+                    auditor.end_time = datetime.now()
+                duration = (auditor.end_time - auditor.start_time).total_seconds()
+                
+                try:
+                    ETLNotifier.notify_pipeline_failure(
+                        pipeline_id=pipeline_config.get("id", destination),
+                        source_name=source_name,
+                        destination_name=f"gold.{destination}",
+                        error_message=error_msg,
+                        duration_seconds=duration
+                    )
+                except Exception as notify_error:
+                    logger.error(f"Failed to send notification: {notify_error}")
         
         raise 
