@@ -82,7 +82,6 @@ DATA_SOURCES = {
             "Active Opportunity": "boolean",
             "Latest Status Entry": "boolean"
         },
-        "primary_key": "Lead Name",
         "incremental_column": "Date",
         "bronze_table": "bronze_aws_sales",
         "silver_table": "silver_aws_sales",

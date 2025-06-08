@@ -109,9 +109,8 @@ services:
           memory: 2G
     networks:
       - etl-network
-    # Run our AWS sales ETL pipeline with full load
-    command: ["--run-aws-sales", "--full-load"]
-    restart: on-failure
+    # Keep container running for manual execution
+    restart: "no"
 
 networks:
   etl-network:

@@ -16,5 +16,6 @@ RUN mkdir -p data logs
 # Download data (có thể tách bước này ra để build nhẹ hơn)
 RUN wget -O data/SalesData.csv https://raw.githubusercontent.com/aws-samples/data-engineering-on-aws/main/dataset/SalesData.csv
 
-ENTRYPOINT ["python", "-m", "src.main"]
-CMD ["--run-aws-sales", "--full-load"]
+# Override Bitnami entrypoint and keep container running
+ENTRYPOINT []
+CMD ["tail", "-f", "/dev/null"] 
