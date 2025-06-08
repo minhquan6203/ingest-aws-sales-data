@@ -239,7 +239,7 @@ def ingest_to_bronze(source_config, audit=True, notify=True, incremental=True):
                         pipeline_id=f"bronze_{bronze_table}",
                         source_name=source_path,
                         destination_name=f"bronze.{bronze_table}",
-                        error_message=error_msg,
+                        error=error_msg,
                         duration_seconds=duration
                     )
                 except Exception as notify_error:

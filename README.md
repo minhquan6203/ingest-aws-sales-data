@@ -1,114 +1,258 @@
-# AWS Sales Data ETL Pipeline
+# Enhanced 3-Layer ELT System for AWS Sales Data
 
-This project implements a 3-layer data ingestion architecture (Bronze, Silver, Gold) for processing AWS Sales Data, including a proper dimensional model in the Gold layer.
+A comprehensive **Extract, Load, Transform (ELT)** system built with modern 3-layer architecture for processing AWS sales data efficiently.
 
-## Architecture
-
-1. **Bronze Layer**: Raw data ingestion from CSV files
-2. **Silver Layer**: Cleaned and transformed data
-3. **Gold Layer**: Dimensional model with fact and dimension tables
-
-## Dimensional Model
-
-The Gold layer implements a proper star schema with:
-
-### Dimension Tables
-- **gold_dim_salesperson**: Salesperson dimension
-- **gold_dim_lead**: Lead/Customer dimension
-- **gold_dim_date**: Date dimension
-- **gold_dim_opportunity_stage**: Opportunity Stage dimension
-
-### Fact Table
-- **gold_fact_sales**: Sales fact table with foreign keys to all dimensions
-
-### Aggregated Views
-- **gold_aws_sales_summary**: Sales summary by salesperson
-- **gold_aws_sales_by_region**: Sales summary by region
-
-## Prerequisites
-
-- Docker Desktop for Windows
-- PowerShell 5.0 or higher
-
-## Quick Start
-
-### Using PowerShell (Recommended)
-
-1. Right-click on `run_docker.ps1` and select "Run with PowerShell"
-   - This script will check if Docker is running
-   - Create necessary directories
-   - Build and start the containers
-
-### Testing Data Ingestion
-
-To test if the data ingestion works correctly without running the full pipeline:
+## 🏗️ Architecture Overview
 
 ```
-python run_aws_sales_pipeline.py --test
+Data Sources → Bronze Layer → Silver Layer → Gold Layer → Analytics
+   (Raw)      (Validated)    (Cleaned)     (Business)    (Reports)
 ```
 
-This will:
-1. Download the SalesData.csv file if not present
-2. Test reading the CSV file with the configured schema
-3. Display sample data and schema information
-4. Verify column names match the configuration
+### Layer Breakdown
 
-### Viewing the Dimensional Schema
+- **🥉 Bronze Layer**: Raw data ingestion with validation
+- **🥈 Silver Layer**: Cleaned and standardized data
+- **🥇 Gold Layer**: Business-ready dimensional model and analytics
 
-To view the details of the dimensional model:
+## 🚀 Quick Start
+
+### Option 1: Interactive Demo
+```bash
+python quick_start.py
+```
+
+### Option 2: Direct Pipeline Execution
+```bash
+# Run enhanced pipeline with advanced analytics
+python src/main.py --run-enhanced-aws-sales
+
+# Generate analytics dashboard
+python src/main.py --run-analytics
+```
+
+### Option 3: Docker Deployment
+```bash
+docker-compose up --build
+```
+
+## 📊 Data Assets Created
+
+### Bronze Layer
+- `bronze_aws_sales` - Raw sales data with validation
+
+### Silver Layer  
+- `silver_aws_sales` - Cleaned and standardized data
+
+### Gold Layer - Dimensional Model
+- `gold_dim_salesperson` - Salesperson dimension
+- `gold_dim_lead` - Lead/Customer dimension
+- `gold_dim_date` - Date dimension
+- `gold_dim_opportunity_stage` - Stage dimension
+- `gold_fact_sales` - Central fact table
+
+### Gold Layer - Advanced Analytics
+- `gold_sales_performance_metrics` - Sales performance analysis
+- `gold_opportunity_funnel` - Sales funnel metrics
+- `gold_monthly_sales_trends` - Time-series analysis
+- `gold_lead_scoring` - Lead qualification insights
+- `gold_aws_sales_summary` - Executive summaries
+- `gold_aws_sales_by_region` - Regional performance
+
+## 🎯 Key Features
+
+### ✅ Enhanced Data Quality
+- Comprehensive validation rules
+- Data type checking
+- Business rule validation
+- Audit trail for all operations
+
+### ⚡ Performance Optimized
+- Incremental loading support
+- Spark-based distributed processing
+- Intelligent caching and partitioning
+- Resource optimization
+
+### 📈 Advanced Analytics
+- Executive dashboard with KPIs
+- Sales performance metrics
+- Opportunity funnel analysis
+- Lead scoring and qualification
+- Time-series trend analysis
+
+### 🔧 Production Ready
+- Complete audit trail
+- Error handling and recovery
+- Monitoring and alerting
+- Docker containerization
+
+## 💻 Usage Examples
+
+### Pipeline Operations
+```bash
+# Run standard pipeline
+python src/main.py --run-aws-sales
+
+# Run enhanced pipeline
+python src/main.py --run-enhanced-aws-sales
+
+# Run with full load
+python src/main.py --run-enhanced-aws-sales --full-load
+
+# Run specific analytics
+python src/main.py --run-analytics-pipeline performance
+```
+
+### System Management
+```bash
+# List all pipelines
+python src/main.py --list-pipelines
+
+# Show execution history
+python src/main.py --show-history
+
+# Show dimensional schema
+python src/main.py --show-schema
+
+# Test data ingestion
+python src/main.py --test-ingestion
+```
+
+## 📋 Requirements
+
+### Dependencies
+- Python 3.8+
+- Apache Spark 3.x
+- PostgreSQL 13+
+- MinIO (S3-compatible storage)
+- Docker & Docker Compose
+
+### Installation
+```bash
+pip install -r requirements.txt
+```
+
+## 🏗️ Infrastructure
+
+### Services
+- **PostgreSQL**: Data warehouse for analytics tables
+- **MinIO**: Object storage for data files
+- **Apache Spark**: Distributed processing engine
+
+### Docker Services
+```yaml
+services:
+  postgres:    # Data warehouse
+  minio:       # Object storage  
+  aws-sales-etl: # Main ETL application
+```
+
+## 📊 Business Intelligence
+
+### Executive Dashboard Features
+- Overall performance metrics
+- Top performer rankings
+- Regional analysis
+- Opportunity funnel
+- Monthly trends
+
+### Sample Analytics Queries
+```sql
+-- Top performing salespeople
+SELECT salesperson, region, actual_revenue, win_rate_percent
+FROM gold_sales_performance_metrics
+ORDER BY actual_revenue DESC;
+
+-- Sales funnel analysis
+SELECT stage, opportunity_count, stage_pipeline_value
+FROM gold_opportunity_funnel
+ORDER BY stage;
+
+-- Monthly revenue trends
+SELECT year, month, region, revenue_won
+FROM gold_monthly_sales_trends
+ORDER BY year DESC, month DESC;
+```
+
+## 📁 Project Structure
 
 ```
-python run_aws_sales_pipeline.py --show-schema
+├── src/
+│   ├── analytics/          # Analytics dashboard
+│   ├── audit/             # Audit trail system
+│   ├── config/            # Pipeline configuration
+│   ├── controller/        # ETL orchestration
+│   ├── ingestion/         # Bronze layer ingestion
+│   ├── transformation/    # Silver & Gold transformations
+│   └── utils/            # Utilities and helpers
+├── data/                 # Data files
+├── docs/                 # Documentation
+├── logs/                 # Execution logs
+├── docker-compose.yml    # Container orchestration
+├── quick_start.py        # Interactive demo
+└── README.md
 ```
 
-### Using Batch Script
+## 🔍 Monitoring & Auditing
 
-1. Double-click the `run_docker.bat` script:
-   ```
-   run_docker.bat
-   ```
+### Audit Trail Features
+- Pipeline execution tracking
+- Error logging and recovery
+- Performance metrics
+- Data lineage tracking
 
-### Manual Setup
+### Log Management
+- Structured logging with Loguru
+- Automatic log rotation
+- Debug and production modes
+- Centralized error tracking
 
-1. Ensure Docker Desktop is running
-2. Open a command prompt or PowerShell window
-3. Build and start the Docker containers:
-   ```
-   docker-compose up --build
-   ```
+## 🚀 Advanced Features
 
-## Data Flow
+### Incremental Loading
+- Timestamp-based processing
+- Delta detection
+- Efficient resource usage
+- Near real-time capability
 
-1. **Bronze Layer**: Raw data is ingested from the CSV file and stored in MinIO
-2. **Silver Layer**: Data is cleaned, validated, and transformed
-3. **Gold Layer**: 
-   - Dimension tables are created from the silver layer
-   - Fact table is created with foreign keys to the dimension tables
-   - Aggregated views are created for reporting
+### Data Quality Framework
+- Pre-ingestion validation
+- Business rule checking
+- Data profiling
+- Quality metrics tracking
 
-## Accessing Results
+### Analytics Export
+- CSV data exports
+- Automated reporting
+- Custom dashboard generation
+- Business intelligence integration
 
-- **MinIO**: Access the MinIO console at http://localhost:9001 (login: minioadmin/minioadmin)
-  - Bronze data: `bronze` bucket
-  - Silver data: `silver` bucket
-  - Gold data: `gold` bucket (contains dimension and fact tables)
+## 📖 Documentation
 
-- **PostgreSQL**: Connect to PostgreSQL at localhost:5432 (login: postgres/postgres)
-  - Database: datawarehouse
-  - Tables: Check the ETL audit records in `etl_audit` table
-  - Gold schema: Contains all dimension and fact tables
+- **[Complete System Guide](docs/ELT_SYSTEM_GUIDE.md)** - Comprehensive documentation
+- **[Architecture Diagram](#)** - Visual system overview
+- **[API Reference](#)** - Technical specifications
 
-## Customization
+## 🤝 Contributing
 
-- Edit `src/config/metadata.py` to modify the data schema and transformations
-- Edit `docker-compose.yml` to change container configurations
+1. Fork the repository
+2. Create a feature branch
+3. Make your changes
+4. Add tests if applicable
+5. Submit a pull request
 
-## Troubleshooting
+## 📝 License
 
-- Check logs in the `logs` directory
-- If containers fail to start:
-  1. Run `docker-compose down` to stop all containers
-  2. Run `docker-compose up --build` to rebuild and restart
-- Ensure Docker Desktop has at least 4GB of memory allocated
-- If MinIO or PostgreSQL services are unavailable, check if those ports (9000, 9001, 5432) are already in use by other applications
-- If you encounter date parsing issues, verify the date format in the CSV matches the expected format (M/d/yyyy) 
+This project is licensed under the MIT License - see the LICENSE file for details.
+
+## 🙋‍♂️ Support
+
+For questions, issues, or feature requests:
+- Check the execution logs in `logs/`
+- Review the audit trail with `--show-history`
+- Consult the comprehensive documentation
+- Open an issue on GitHub
+
+---
+
+**Ready to get started?** Run `python quick_start.py` for an interactive demo! 🚀 

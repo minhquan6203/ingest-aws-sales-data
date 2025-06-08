@@ -298,7 +298,7 @@ def transform_to_gold(pipeline_config, incremental=False, audit=True, notify=Tru
                         pipeline_id=pipeline_config.get("id", destination),
                         source_name=source_name,
                         destination_name=f"gold.{destination}",
-                        error_message=error_msg,
+                        error=error_msg,
                         duration_seconds=duration
                     )
                 except Exception as notify_error:

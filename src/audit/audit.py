@@ -32,7 +32,7 @@ class ETLAuditor:
         self.end_time = None
         self.records_processed = 0
         self.status = "RUNNING"
-        self.error_message = None
+        self.error = None
         self.audit_id = None
         self.metadata = None
         
@@ -82,16 +82,16 @@ class ETLAuditor:
             logger.error(f"Failed to create audit record: {e}")
             # Don't raise the exception - allow the ETL process to continue even if auditing fails
     
-    def update_status(self, status, error_message=None):
+    def update_status(self, status, error=None):
         """
         Update the status of the audit record
         
         Args:
             status: New status (RUNNING, COMPLETED, FAILED)
-            error_message: Error message if status is FAILED
+            error: Error message if status is FAILED
         """
         self.status = status
-        self.error_message = error_message
+        self.error = error
         
         if status in ["COMPLETED", "FAILED"]:
             self.end_time = datetime.now()
@@ -131,7 +131,7 @@ class ETLAuditor:
         SET status = %s,
             records_processed = %s,
             end_time = %s,
-            error_message = %s,
+            error = %s,
             metadata = %s
         WHERE audit_id = %s;
         """
@@ -140,7 +140,7 @@ class ETLAuditor:
             self.status,
             self.records_processed,
             self.end_time,
-            self.error_message,
+            self.error,
             metadata_json,
             self.audit_id
         )

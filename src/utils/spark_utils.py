@@ -5,7 +5,7 @@ from pyspark.sql import SparkSession
 from loguru import logger
 import os
 import sys
-from pyspark.sql.functions import col, trim
+from pyspark.sql.functions import col, trim, to_date
 
 from src.config.config import SPARK_MASTER, SPARK_APP_NAME, MINIO_ENDPOINT, MINIO_ACCESS_KEY, MINIO_SECRET_KEY, SPARK_ENDPOINT_INTERNAL
 
@@ -25,16 +25,21 @@ def create_spark_session():
     spark = (SparkSession.builder
              .master(SPARK_MASTER)
              .appName(SPARK_APP_NAME)
-             .config("spark.driver.extraClassPath", "/usr/share/java/*")
-             .config("spark.executor.extraClassPath", "/usr/share/java/*")
+             .config("spark.driver.extraClassPath", "/opt/bitnami/spark/jars/*")
+             .config("spark.executor.extraClassPath", "/opt/bitnami/spark/jars/*")
+             .config("spark.jars", "/opt/bitnami/spark/jars/postgresql-42.6.0.jar")
              .config("spark.hadoop.fs.s3a.endpoint", endpoint)
              .config("spark.hadoop.fs.s3a.access.key", MINIO_ACCESS_KEY)
              .config("spark.hadoop.fs.s3a.secret.key", MINIO_SECRET_KEY)
              .config("spark.hadoop.fs.s3a.path.style.access", "true")
              .config("spark.hadoop.fs.s3a.impl", "org.apache.hadoop.fs.s3a.S3AFileSystem")
-             .config("spark.hadoop.fs.s3a.connection.establish.timeout", "5s")
-             .config("spark.hadoop.fs.s3a.connection.timeout", "10s")
+             .config("spark.hadoop.fs.s3a.connection.establish.timeout", "5000")
+             .config("spark.hadoop.fs.s3a.connection.timeout", "10000")
              .config("spark.hadoop.fs.s3a.attempts.maximum", "20")
+             .config("spark.sql.adaptive.enabled", "true")
+             .config("spark.sql.adaptive.coalescePartitions.enabled", "true")
+             .config("spark.serializer", "org.apache.spark.serializer.KryoSerializer")
+             .config("spark.sql.execution.arrow.pyspark.enabled", "false")
              .getOrCreate())
     
     return spark
@@ -126,6 +131,12 @@ def apply_transformations(df, transformations):
             column = transform.get("column")
             to_type = transform.get("to_type")
             result_df = result_df.withColumn(column, col(column).cast(to_type))
+            
+        elif transform_type == "date_conversion":
+            column = transform.get("column")
+            from_format = transform.get("from_format", "M/d/yyyy")
+            # Convert date string to proper date format
+            result_df = result_df.withColumn(column, to_date(col(column), from_format))
             
         elif transform_type == "drop_column":
             column = transform.get("column")

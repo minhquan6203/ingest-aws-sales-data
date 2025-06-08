@@ -112,7 +112,7 @@ class ETLNotifier:
         return ETLNotifier.send_email_notification(subject, message)
     
     @staticmethod
-    def notify_pipeline_failure(pipeline_id, source_name, destination_name, error_message, duration_seconds):
+    def notify_pipeline_failure(pipeline_id, source_name, destination_name, error, duration_seconds):
         """
         Send a notification when a pipeline fails
         
@@ -120,7 +120,7 @@ class ETLNotifier:
             pipeline_id: Identifier for the pipeline
             source_name: Name of the source
             destination_name: Name of the destination
-            error_message: Error message
+            error: Error message
             duration_seconds: Duration in seconds
         """
         subject = f"ALERT: ETL Pipeline Failed: {pipeline_id}"
@@ -133,7 +133,7 @@ class ETLNotifier:
         Duration: {duration_seconds:.2f} seconds
         
         Error:
-        {error_message}
+        {error}
         
         This is an automated message.
         """

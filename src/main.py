@@ -110,6 +110,26 @@ def parse_args():
         help="Test data ingestion without running the full pipeline"
     )
     
+    # Add analytics dashboard option
+    parser.add_argument(
+        "--run-analytics",
+        action="store_true",
+        help="Run the sales analytics dashboard"
+    )
+    
+    # Add enhanced pipeline option
+    parser.add_argument(
+        "--run-enhanced-aws-sales",
+        action="store_true",
+        help="Run the enhanced AWS sales data pipeline with advanced analytics"
+    )
+    
+    # Add option to run specific analytics pipeline
+    parser.add_argument(
+        "--run-analytics-pipeline",
+        help="Run a specific analytics pipeline (performance, funnel, trends, scoring)"
+    )
+
     return parser.parse_args()
 
 
@@ -342,6 +362,21 @@ def main():
             sys.exit(1)
         return
     
+    # Run analytics dashboard if requested
+    if args.run_analytics:
+        try:
+            from src.analytics.dashboard import SalesAnalyticsDashboard
+            dashboard = SalesAnalyticsDashboard()
+            dashboard.generate_executive_summary()
+            dashboard.export_to_csv()
+            dashboard.close()
+            logger.info("Analytics dashboard completed successfully")
+        except Exception as e:
+            logger.error(f"Error running analytics dashboard: {e}")
+            logger.error(traceback.format_exc())
+            sys.exit(1)
+        return
+    
     # Test audit functionality if requested
     if args.test_audit:
         logger.info("Running audit test")
@@ -381,6 +416,24 @@ def main():
         controller.run_pipeline(pipeline_id, incremental=incremental)
         return
     
+    # Run specific analytics pipeline if requested
+    if args.run_analytics_pipeline:
+        analytics_pipelines = {
+            "performance": "aws_sales_performance_pipeline",
+            "funnel": "aws_opportunity_funnel_pipeline", 
+            "trends": "aws_monthly_trends_pipeline",
+            "scoring": "aws_lead_scoring_pipeline"
+        }
+        
+        pipeline_name = analytics_pipelines.get(args.run_analytics_pipeline)
+        if pipeline_name:
+            logger.info(f"Running analytics pipeline: {pipeline_name}")
+            controller.run_pipeline(pipeline_name, incremental=incremental)
+        else:
+            logger.error(f"Analytics pipeline '{args.run_analytics_pipeline}' not found")
+            logger.info("Available analytics pipelines: performance, funnel, trends, scoring")
+        return
+    
     if args.run_aws_sales:
         logger.info(f"Running AWS sales pipelines (load type: {load_type})")
         
@@ -401,29 +454,31 @@ def main():
             logger.info("Successfully downloaded SalesData.csv")
         
         # Run bronze to silver pipeline
-        logger.info("Step 1/7: Running bronze to silver transformation")
+        logger.info("Step 1/8: Running bronze to silver transformation")
         controller.run_pipeline("aws_sales_pipeline", incremental=incremental)
         
-        # Run dimension tables pipelines
-        logger.info("Step 2/7: Creating salesperson dimension")
+        # Run dimension tables pipelines first (they must be created before fact table)
+        logger.info("Step 2/8: Creating salesperson dimension")
         controller.run_pipeline("aws_dim_salesperson_pipeline", incremental=incremental)
         
-        logger.info("Step 3/7: Creating lead dimension")
+        logger.info("Step 3/8: Creating lead dimension")
         controller.run_pipeline("aws_dim_lead_pipeline", incremental=incremental)
         
-        logger.info("Step 4/7: Creating date dimension")
+        logger.info("Step 4/8: Creating date dimension")
         controller.run_pipeline("aws_dim_date_pipeline", incremental=incremental)
         
-        logger.info("Step 5/7: Creating opportunity stage dimension")
+        logger.info("Step 5/8: Creating opportunity stage dimension")
         controller.run_pipeline("aws_dim_opportunity_stage_pipeline", incremental=incremental)
         
-        # Run fact table pipeline
-        logger.info("Step 6/7: Creating sales fact table")
+        # Run fact table pipeline (depends on dimension tables)
+        logger.info("Step 6/8: Creating sales fact table")
         controller.run_pipeline("aws_fact_sales_pipeline", incremental=incremental)
         
         # Run aggregated views for reporting
-        logger.info("Step 7/7: Creating aggregated views for reporting")
+        logger.info("Step 7/8: Creating sales summary view")
         controller.run_pipeline("aws_sales_summary_pipeline", incremental=incremental)
+        
+        logger.info("Step 8/8: Creating regional sales view")
         controller.run_pipeline("aws_sales_region_pipeline", incremental=incremental)
         
         logger.info("AWS sales data pipeline completed successfully")
@@ -431,6 +486,86 @@ def main():
         logger.info("- Dimension tables: gold_dim_salesperson, gold_dim_lead, gold_dim_date, gold_dim_opportunity_stage")
         logger.info("- Fact table: gold_fact_sales")
         logger.info("- Aggregated views: gold_aws_sales_summary, gold_aws_sales_by_region")
+        return
+    
+    # Run enhanced AWS sales pipeline if requested
+    if args.run_enhanced_aws_sales:
+        logger.info(f"Running enhanced AWS sales pipelines with advanced analytics (load type: {load_type})")
+        
+        # Check if SalesData.csv exists
+        if not os.path.exists("data/SalesData.csv"):
+            logger.warning("SalesData.csv not found in data directory")
+            
+            # Create data directory if it doesn't exist
+            os.makedirs("data", exist_ok=True)
+            
+            # Try to download the file
+            logger.info("Attempting to download SalesData.csv...")
+            download_cmd = [
+                "python", "-c", 
+                "import requests; open('data/SalesData.csv', 'wb').write(requests.get('https://raw.githubusercontent.com/aws-samples/data-engineering-on-aws/main/dataset/SalesData.csv').content)"
+            ]
+            subprocess.run(download_cmd, check=True)
+            logger.info("Successfully downloaded SalesData.csv")
+        
+        # Run base AWS sales pipeline first
+        logger.info("Step 1/11: Running bronze to silver transformation")
+        controller.run_pipeline("aws_sales_pipeline", incremental=incremental)
+        
+        # Run dimension tables pipelines
+        logger.info("Step 2/11: Creating salesperson dimension")
+        controller.run_pipeline("aws_dim_salesperson_pipeline", incremental=incremental)
+        
+        logger.info("Step 3/11: Creating lead dimension")
+        controller.run_pipeline("aws_dim_lead_pipeline", incremental=incremental)
+        
+        logger.info("Step 4/11: Creating date dimension")
+        controller.run_pipeline("aws_dim_date_pipeline", incremental=incremental)
+        
+        logger.info("Step 5/11: Creating opportunity stage dimension")
+        controller.run_pipeline("aws_dim_opportunity_stage_pipeline", incremental=incremental)
+        
+        # Run fact table pipeline
+        logger.info("Step 6/11: Creating sales fact table")
+        controller.run_pipeline("aws_fact_sales_pipeline", incremental=incremental)
+        
+        # Run aggregated views for reporting
+        logger.info("Step 7/11: Creating aggregated views for reporting")
+        controller.run_pipeline("aws_sales_summary_pipeline", incremental=incremental)
+        controller.run_pipeline("aws_sales_region_pipeline", incremental=incremental)
+        
+        # Run advanced analytics pipelines
+        logger.info("Step 8/11: Creating sales performance metrics")
+        controller.run_pipeline("aws_sales_performance_pipeline", incremental=incremental)
+        
+        logger.info("Step 9/11: Creating opportunity funnel analysis")
+        controller.run_pipeline("aws_opportunity_funnel_pipeline", incremental=incremental)
+        
+        logger.info("Step 10/11: Creating monthly trends analysis")
+        controller.run_pipeline("aws_monthly_trends_pipeline", incremental=incremental)
+        
+        logger.info("Step 11/11: Creating lead scoring analysis")
+        controller.run_pipeline("aws_lead_scoring_pipeline", incremental=incremental)
+        
+        logger.info("Enhanced AWS sales data pipeline completed successfully")
+        logger.info("The following tables have been created:")
+        logger.info("- Dimension tables: gold_dim_salesperson, gold_dim_lead, gold_dim_date, gold_dim_opportunity_stage")
+        logger.info("- Fact table: gold_fact_sales")
+        logger.info("- Aggregated views: gold_aws_sales_summary, gold_aws_sales_by_region")
+        logger.info("- Advanced analytics: gold_sales_performance_metrics, gold_opportunity_funnel")
+        logger.info("- Trend analysis: gold_monthly_sales_trends, gold_lead_scoring")
+        
+        # Run analytics dashboard
+        logger.info("Generating analytics dashboard...")
+        try:
+            from src.analytics.dashboard import SalesAnalyticsDashboard
+            dashboard = SalesAnalyticsDashboard()
+            dashboard.generate_executive_summary()
+            dashboard.export_to_csv()
+            dashboard.close()
+        except Exception as e:
+            logger.error(f"Error running analytics dashboard: {e}")
+        
         return
     
     if args.run_all:

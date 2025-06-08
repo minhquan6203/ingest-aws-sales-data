@@ -332,7 +332,7 @@ def transform_to_silver(pipeline_config, source_config, audit=True, notify=True,
                         pipeline_id=pipeline_config.get("source"),
                         source_name=f"bronze.{bronze_table}",
                         destination_name=f"silver.{silver_table}",
-                        error_message=error_msg,
+                        error=error_msg,
                         duration_seconds=duration
                     )
                 except Exception as notify_error:
